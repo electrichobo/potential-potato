@@ -1,0 +1,12 @@
+﻿numpy
+pandas
+opencv-python
+pillow
+imageio
+imageio-ffmpeg
+scenedetect
+scikit-learn
+tqdm
+pyyaml
+requests
+yt-dlp

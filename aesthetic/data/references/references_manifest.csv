@@ -1,0 +1,101 @@
+﻿id,type,name,year,dp,source,notes
+1,film,"Lawrence of Arabia",1962,"Freddie Young",,seed
+2,film,"Citizen Kane",1941,"Gregg Toland",,seed
+3,film,"The Godfather",1972,"Gordon Willis",,seed
+4,film,"Apocalypse Now",1979,"Vittorio Storaro",,seed
+5,film,"2001: A Space Odyssey",1968,"Geoffrey Unsworth",,seed
+6,film,"Barry Lyndon",1975,"John Alcott",,seed
+7,film,"Days of Heaven",1978,"Néstor Almendros (+ Haskell Wexler)",,seed
+8,film,"The Conformist",1970,"Vittorio Storaro",,seed
+9,film,"The Last Emperor",1987,"Vittorio Storaro",,seed
+10,film,"The Red Shoes",1948,"Jack Cardiff",,seed
+11,film,"Black Narcissus",1947,"Jack Cardiff",,seed
+12,film,"The Leopard",1963,"Giuseppe Rotunno",,seed
+13,film,"The Third Man",1949,"Robert Krasker",,seed
+14,film,"The Searchers",1956,"Winton C. Hoch",,seed
+15,film,"Seven Samurai",1954,"Asakazu Nakai",,seed
+16,film,"Rashomon",1950,"Kazuo Miyagawa",,seed
+17,film,"Ugetsu",1953,"Kazuo Miyagawa",,seed
+18,film,"The Passion of Joan of Arc",1928,"Rudolph Maté",,seed
+19,film,"Sunrise",1927,"Charles Rosher & Karl Struss",,seed
+20,film,"Metropolis",1927,"Karl Freund & Günther Rittau",,seed
+21,film,"Once Upon a Time in the West",1968,"Tonino Delli Colli",,seed
+22,film,"The Wild Bunch",1969,"Lucien Ballard",,seed
+23,film,"Chinatown",1974,"John A. Alonzo",,seed
+24,film,"Raging Bull",1980,"Michael Chapman",,seed
+25,film,"Taxi Driver",1976,"Michael Chapman",,seed
+26,film,"The Godfather Part II",1974,"Gordon Willis",,seed
+27,film,"The Thin Red Line",1998,"John Toll",,seed
+28,film,"The English Patient",1996,"John Seale",,seed
+29,film,"Schindler’s List",1993,"Janusz Kamiński",,seed
+30,film,"Saving Private Ryan",1998,"Janusz Kamiński",,seed
+31,film,"The New World",2005,"Emmanuel Lubezki",,seed
+32,film,"Children of Men",2006,"Emmanuel Lubezki",,seed
+33,film,"The Tree of Life",2011,"Emmanuel Lubezki",,seed
+34,film,"Gravity",2013,"Emmanuel Lubezki",,seed
+35,film,"Birdman",2014,"Emmanuel Lubezki",,seed
+36,film,"The Revenant",2015,"Emmanuel Lubezki",,seed
+37,film,"Blade Runner",1982,"Jordan Cronenweth",,seed
+38,film,"Blade Runner 2049",2017,"Roger Deakins",,seed
+39,film,"The Assassination of Jesse James by the Coward Robert Ford",2007,"Roger Deakins",,seed
+40,film,"No Country for Old Men",2007,"Roger Deakins",,seed
+41,film,"Skyfall",2012,"Roger Deakins",,seed
+42,film,"1917",2019,"Roger Deakins",,seed
+43,film,"Fargo",1996,"Roger Deakins",,seed
+44,film,"The Shawshank Redemption",1994,"Roger Deakins",,seed
+45,film,"Sicario",2015,"Roger Deakins",,seed
+46,film,"Kundun",1997,"Roger Deakins",,seed
+47,film,"There Will Be Blood",2007,"Robert Elswit",,seed
+48,film,"Magnolia",1999,"Robert Elswit",,seed
+49,film,"Inherent Vice",2014,"Robert Elswit",,seed
+50,film,"Inception",2010,"Wally Pfister",,seed
+51,film,"The Dark Knight",2008,"Wally Pfister",,seed
+52,film,"Dunkirk",2017,"Hoyte van Hoytema",,seed
+53,film,"Her",2013,"Hoyte van Hoytema",,seed
+54,film,"Nope",2022,"Hoyte van Hoytema",,seed
+55,film,"Dune",2021,"Greig Fraser",,seed
+56,film,"The Batman",2022,"Greig Fraser",,seed
+57,film,"Zero Dark Thirty",2012,"Greig Fraser",,seed
+58,film,"Mad Max: Fury Road",2015,"John Seale",,seed
+59,film,"The Grand Budapest Hotel",2014,"Robert Yeoman",,seed
+60,film,"Amélie",2001,"Bruno Delbonnel",,seed
+61,film,"A Very Long Engagement",2004,"Bruno Delbonnel",,seed
+62,film,"Inside Llewyn Davis",2013,"Bruno Delbonnel",,seed
+63,film,"Carol",2015,"Edward Lachman",,seed
+64,film,"The Favourite",2018,"Robbie Ryan",,seed
+65,film,"Portrait of a Lady on Fire",2019,"Claire Mathon",,seed
+66,film,"Cold War",2018,"Łukasz Żal",,seed
+67,film,"Ida",2013,"Łukasz Żal & Ryszard Lenczewski",,seed
+68,film,"Roma",2018,"Alfonso Cuarón",,seed
+69,film,"The Lighthouse",2019,"Jarin Blaschke",,seed
+70,film,"If Beale Street Could Talk",2018,"James Laxton",,seed
+71,film,"Moonlight",2016,"James Laxton",,seed
+72,film,"Arrival",2016,"Bradford Young",,seed
+73,film,"Selma",2014,"Bradford Young",,seed
+74,film,"Pariah",2011,"Bradford Young",,seed
+75,film,"In the Mood for Love",2000,"Christopher Doyle",,seed
+76,film,"Days of Being Wild",1990,"Christopher Doyle",,seed
+77,film,"Hero",2002,"Christopher Doyle / Tony Cheung / Yiu-Fai Lai",,seed
+78,film,"House of Flying Daggers",2004,"Zhao Xiaoding",,seed
+79,film,"Crouching Tiger",Hidden Dragon,"2000,Peter Pau",,seed
+80,film,"Raise the Red Lantern",1991,"Gu Changwei",,seed
+81,film,"Farewell My Concubine",1993,"Gu Changwei",,seed
+82,film,"The Grandmaster",2013,"Philippe Le Sourd",,seed
+83,film,"Parasite",2019,"Hong Kyung-pyo",,seed
+84,film,"Oldboy",2003,"Chung Chung-hoon",,seed
+85,film,"The Handmaiden",2016,"Chung Chung-hoon",,seed
+86,film,"Paris",Texas,"1984,Robby Müller",,seed
+87,film,"Down by Law",1986,"Robby Müller",,seed
+88,film,"The Last of the Mohicans",1992,"Dante Spinotti",,seed
+89,film,"Heat",1995,"Dante Spinotti",,seed
+90,film,"L.A. Confidential",1997,"Dante Spinotti",,seed
+91,film,"Se7en",1995,"Darius Khondji",,seed
+92,film,"The City of Lost Children",1995,"Darius Khondji",,seed
+93,film,"The Piano",1993,"Stuart Dryburgh",,seed
+94,film,"The Sweet Hereafter",1997,"Paul Sarossy",,seed
+95,film,"Pan’s Labyrinth",2006,"Guillermo Navarro",,seed
+96,film,"Life of Pi",2012,"Claudio Miranda",,seed
+97,film,"Top Gun: Maverick",2022,"Claudio Miranda",,seed
+98,film,"The Mission",1986,"Chris Menges",,seed
+99,film,"The Color of Money",1986,"Michael Ballhaus",,seed
+100,film,"Once Upon a Time in America",1984,"Tonino Delli Colli",,seed

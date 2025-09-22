@@ -1,0 +1,33 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# System files
+.DS_Store
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Log files
+*.log
+
+# Aesthetic App specific
+aesthetic/data/temp/
+aesthetic/data/cache/
+aesthetic/outputs/
+
+*.dll
+*.lib
+*.pyd
+*.exe
+*.so
+*.dylib
+*.a
+

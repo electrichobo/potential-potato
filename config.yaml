@@ -1,0 +1,74 @@
+﻿# lines 1–80  (config.yaml)
+# AESTHETIC config v0.3 — merged (no duplicate keys)
+
+extract:
+  mode: hybrid                 # (placeholder)
+  per_scene_candidates: 9      # more options per scene (was 7)
+  per_scene_keep: 3            # only used if per_scene_keep_pct is null
+  per_scene_keep_pct: 0.4      # keep ~40% of each scene's micro-pool
+  min_scene_len_frames: 12     # ignore micro-blips
+  min_candidate_gap_frames: 6  # reduce near-adjacent frames
+
+select:
+  top_k: 6
+  overcluster_factor: 4.0      # pushes diversity
+  per_cluster_top: 2           # fewer from each cluster → more variety
+  quality_floor: null          # drop low-quality pre-selection if set (e.g., 0.25)
+
+processing:
+  resize_width: 720            # downscale width before features
+  max_frames: 800              # soft upper bound on global candidates
+
+weights:                        # placeholder for Phase D/E
+  technical: 0.5
+  subjective: 0.5
+
+sampling:
+  jitter_frac: 0.12            # ±12% jitter inside each scene
+  random_seed: 42              # change to reshuffle deterministically
+
+dedup:
+  enable: true
+  embed_min_cosine_dist: 0.02  # CLIP-embed de-dup threshold
+  dhash: true
+  dhash_threshold: 6
+  per_scene_quota: 2
+
+output:
+  save_audits: true
+  write_metrics_txt: true
+  score_prefix: true
+  folder: "aesthetic/outputs"
+
+ffmpeg:
+  bin: "C:\\ffmpeg\\bin\\ffmpeg.exe"
+  probe: "C:\\ffmpeg\\bin\\ffprobe.exe"
+
+logging:
+  verbose: true
+  save_log: true
+
+models:                         # placeholders for Phase D/E
+  clip: null
+
+gpu:
+  enabled: true
+  device: "cuda:0"
+  batch_size: 16
+
+heavy:
+  clip:
+    enabled: true
+    model: "ViT-B-32"
+    precision: "fp32"
+    ref_similarity_weight: 0.0
+# end 1–80
+
+scenes:
+  method: "content"   # "content" or "adaptive"
+  threshold: 20.0     # lower = more cuts (default ~27); try 20–23
+  downscale: 2        # 1=no downscale; 2 or 4 speeds detection
+
+selector:
+  use_clip_if_available: true     # prefer CLIP embeddings when present
+  dedup_clip_cosine_min: 0.02     # optional pre-cluster CLIP de-dup (raise to be stricter)
