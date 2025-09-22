@@ -1,62 +1,129 @@
-﻿# lines 1–160
+﻿# -*- coding: utf-8 -*-
 from __future__ import annotations
-# --- ingest: URL or local path -> cached local file ---
-import os, re, hashlib
+import os
 from pathlib import Path
-from typing import Tuple
-import requests
+from urllib.parse import urlparse
+import tempfile
+import shutil
+import urllib.request
+import logging
+from typing import Optional
 
-_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+LOG = logging.getLogger("aesthetic.ingest")
 
-def _sha1(s: str) -> str:
-    return hashlib.sha1(s.encode('utf-8')).hexdigest()
+VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
+URL_SCHEMES = ("http", "https", "file")
 
-def _cache_dir() -> Path:
-    d = Path('aesthetic/data/cache'); d.mkdir(parents=True, exist_ok=True); return d
-
-def is_url(s: str) -> bool:
-    return bool(_URL_RE.match(s.strip()))
-
-def _try_ytdlp(url: str, out_path: Path) -> bool:
+def _is_url(s: str) -> bool:
     try:
-        import yt_dlp  # optional
-    except Exception:
-        return False
-    ydl_opts = {
-        "outtmpl": str(out_path),
-        "quiet": True,
-        "noprogress": True,
-        "format": "mp4/bestvideo*+bestaudio/best",
-        "merge_output_format": "mp4",
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        return out_path.exists() and out_path.stat().st_size > 0
+        u = urlparse(s)
+        return bool(u.scheme) and u.scheme.lower() in URL_SCHEMES
     except Exception:
         return False
 
-def _http_stream(url: str, out_path: Path, chunk: int = 1024*1024) -> bool:
-    try:
-        with requests.get(url, stream=True, timeout=30) as r:
-            r.raise_for_status()
-            with open(out_path, "wb") as f:
-                for b in r.iter_content(chunk_size=chunk):
-                    if b: f.write(b)
-        return out_path.exists() and out_path.stat().st_size > 0
-    except Exception:
-        return False
+def _looks_like_video_path(path: str) -> bool:
+    lp = path.lower()
+    # allow querystrings after an extension, e.g. .mp4?sig=...
+    for ext in VIDEO_EXTS:
+        if ext in lp:
+            # ensure it ends with ext or ext followed by query/fragment
+            if lp.endswith(ext) or f"{ext}?" in lp or f"{ext}#" in lp:
+                return True
+    return False
 
-def resolve_source(src: str) -> Tuple[str, bool]:
-    p = Path(src)
-    if p.exists() and p.is_file():
-        return str(p.resolve()), False
-    if is_url(src):
-        key = _sha1(src); out = _cache_dir() / f"{key}.mp4"
-        if out.exists() and out.stat().st_size > 0:
-            return str(out), False
-        if _try_ytdlp(src, out): return str(out), True
-        if _http_stream(src, out): return str(out), True
-        raise RuntimeError("Failed to download media from URL.")
-    raise FileNotFoundError("Source not found. Provide a valid path or URL.")
-# end 1–160
+def _tempfile_with_ext(ext: str = ".mp4") -> str:
+    ext = ext if ext.startswith(".") else f".{ext}"
+    fd, tmp_path = tempfile.mkstemp(prefix="aesthetic_", suffix=ext)
+    os.close(fd)
+    return tmp_path
+
+def _guess_ext_from_headers(url: str, headers: dict) -> str:
+    ctype = (headers.get("Content-Type") or headers.get("content-type") or "").lower()
+    if "mp4" in ctype: return ".mp4"
+    if "quicktime" in ctype or "mov" in ctype: return ".mov"
+    if "matroska" in ctype or "mkv" in ctype: return ".mkv"
+    if "webm" in ctype: return ".webm"
+    if "x-msvideo" in ctype or "avi" in ctype: return ".avi"
+    # fallback: sniff from URL path
+    up = urlparse(url)
+    for ext in VIDEO_EXTS:
+        if up.path.lower().endswith(ext):
+            return ext
+    return ".mp4"
+
+def _download_to_tempfile(url: str, timeout: float = 30.0) -> str:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "AESTHETIC/0.3 (+https://localhost) Python-urllib",
+            "Accept": "*/*",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ext = _guess_ext_from_headers(url, dict(resp.headers))
+            tmp_path = _tempfile_with_ext(ext)
+            LOG.info("ingest: downloading %s -> %s", url, tmp_path)
+            with open(tmp_path, "wb") as f:
+                shutil.copyfileobj(resp, f)
+            return tmp_path
+    except Exception:
+        # do not leave partials lying around
+        try:
+            if "tmp_path" in locals() and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        raise
+
+def _resolve_local_path(p: str, project_root: Optional[Path]) -> Path:
+    # expand ~ and env vars
+    p = os.path.expanduser(os.path.expandvars(p))
+    path = Path(p)
+    if not path.is_absolute() and project_root is not None:
+        path = (project_root / path).resolve()
+    else:
+        path = path.resolve()
+    return path
+
+def resolve_source(source: str, config: Optional[dict] = None) -> str:
+    """
+    Return a cv2.VideoCapture-friendly string for the given source.
+      - http(s) video URLs (even with querystrings) are returned directly
+      - file:// URLs are resolved to local filesystem paths
+      - other http(s) URLs are downloaded to a temp file
+      - local paths are expanded, resolved (relative to project root), and validated
+
+    Raises:
+        FileNotFoundError if a local path cannot be found.
+        URLError/HTTPError on network failures.
+    """
+    cfg = config or {}
+    # determine project root (…/aesthetic/core -> project)
+    try:
+        project_root = Path(__file__).resolve().parents[2]
+    except Exception:
+        project_root = None
+
+    if _is_url(source):
+        u = urlparse(source)
+        scheme = u.scheme.lower()
+        if scheme == "file":
+            local_p = _resolve_local_path(u.path, project_root)
+            if not local_p.exists():
+                raise FileNotFoundError(f"file URL not found: {source}")
+            LOG.info("ingest: using file URL path %s", str(local_p))
+            return str(local_p)
+        # http/https
+        if _looks_like_video_path(u.path):
+            LOG.info("ingest: using stream URL %s", source)
+            return source
+        # unknown resource type → download then open
+        return _download_to_tempfile(source)
+
+    # local filesystem path
+    path = _resolve_local_path(source, project_root)
+    if not path.exists():
+        raise FileNotFoundError(f"source not found: {source}")
+    return str(path)

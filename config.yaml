@@ -1,35 +1,34 @@
-﻿# lines 1–80  (config.yaml)
-# AESTHETIC config v0.3 — merged (no duplicate keys)
+﻿# AESTHETIC config v0.3 — cleaned
 
 extract:
-  mode: hybrid                 # (placeholder)
-  per_scene_candidates: 9      # more options per scene (was 7)
-  per_scene_keep: 3            # only used if per_scene_keep_pct is null
-  per_scene_keep_pct: 0.4      # keep ~40% of each scene's micro-pool
-  min_scene_len_frames: 12     # ignore micro-blips
-  min_candidate_gap_frames: 6  # reduce near-adjacent frames
+  mode: hybrid
+  per_scene_candidates: 9
+  per_scene_keep: 3
+  per_scene_keep_pct: 0.4
+  min_scene_len_frames: 12
+  min_candidate_gap_frames: 6
 
 select:
   top_k: 6
-  overcluster_factor: 4.0      # pushes diversity
-  per_cluster_top: 2           # fewer from each cluster → more variety
-  quality_floor: null          # drop low-quality pre-selection if set (e.g., 0.25)
+  overcluster_factor: 4.0
+  per_cluster_top: 2
+  quality_floor: null
 
 processing:
-  resize_width: 720            # downscale width before features
-  max_frames: 800              # soft upper bound on global candidates
+  resize_width: 720
+  max_frames: 800
 
-weights:                        # placeholder for Phase D/E
+weights:
   technical: 0.5
   subjective: 0.5
 
 sampling:
-  jitter_frac: 0.12            # ±12% jitter inside each scene
-  random_seed: 42              # change to reshuffle deterministically
+  jitter_frac: 0.12
+  random_seed: 42
 
 dedup:
-  enable: true
-  embed_min_cosine_dist: 0.02  # CLIP-embed de-dup threshold
+  enable: false
+  embed_min_cosine_dist: 0.02
   dhash: true
   dhash_threshold: 6
   per_scene_quota: 2
@@ -48,27 +47,27 @@ logging:
   verbose: true
   save_log: true
 
-models:                         # placeholders for Phase D/E
+models:
   clip: null
 
 gpu:
   enabled: true
   device: "cuda:0"
-  batch_size: 16
+  batch_size: 8
 
 heavy:
   clip:
     enabled: true
     model: "ViT-B-32"
-    precision: "fp32"
-    ref_similarity_weight: 0.0
-# end 1–80
+    precision: "fp16"     # keep fp32 as you set
+    run_mode: "subprocess"      # subprocess -> inprocess fallback
+    timeout_sec: 90
 
 scenes:
-  method: "content"   # "content" or "adaptive"
-  threshold: 20.0     # lower = more cuts (default ~27); try 20–23
-  downscale: 2        # 1=no downscale; 2 or 4 speeds detection
+  method: "content"       # "content" or "adaptive"
+  threshold: 20.0
+  downscale: 2
 
 selector:
-  use_clip_if_available: true     # prefer CLIP embeddings when present
-  dedup_clip_cosine_min: 0.02     # optional pre-cluster CLIP de-dup (raise to be stricter)
+  use_clip_if_available: true
+  dedup_clip_cosine_min: 0.02
