@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Sequence, Optional, Dict, Any
+from typing import Sequence, Optional, Dict, Any, Tuple
 import numpy as np
 import logging, os, sys, time, tempfile, json, subprocess, shutil
 from pathlib import Path
@@ -26,7 +26,7 @@ def _precision_to_fp16(precision: str | None) -> bool:
 def _resolve_clip_cfg(global_cfg: Optional[dict]) -> dict:
     cfg = global_cfg or {}
     heavy = cfg.get("heavy") or {}
-    clip  = heavy.get("clip") or {}
+@@ -30,149 +30,150 @@ def _resolve_clip_cfg(global_cfg: Optional[dict]) -> dict:
     gpu   = cfg.get("gpu") or {}
     out   = cfg.get("output") or {}
 
@@ -52,7 +52,7 @@ def _write_npz_rgb(frames_bgr: Sequence[np.ndarray], path: str) -> None:
     arr = np.stack(frames, axis=0)  # (N,H,W,3) RGB
     np.savez_compressed(path, rgb=arr)
 
-def _call_worker_subprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Optional[np.ndarray]:
+def _call_worker_subprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Tuple[Optional[np.ndarray], bool]:
     """
     Use CLI worker in a separate process with a timeout.
     Returns feats array or None on failure.
@@ -87,7 +87,7 @@ def _call_worker_subprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Opt
             )
         except subprocess.TimeoutExpired:
             LOG.warning("CLIP(subprocess): timed out after %ds; skipping CLIP.", int(args["timeout_s"]))
-            return None
+            return None, True
 
         if res.stdout:
             LOG.debug("clip_worker stdout:\n%s", res.stdout)
@@ -96,31 +96,31 @@ def _call_worker_subprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Opt
 
         if res.returncode != 0:
             LOG.warning("CLIP(subprocess): worker exit code=%s; see %s", res.returncode, log_path)
-            return None
+            return None, False
 
         if not os.path.exists(out_npy):
             LOG.warning("CLIP(subprocess): feats file missing; see %s", log_path)
-            return None
+            return None, False
 
         feats = np.load(out_npy)
         if isinstance(feats, np.lib.npyio.NpzFile):
             # shouldn't happen; worker writes .npy
             LOG.warning("CLIP(subprocess): unexpected NPZ output; skipping.")
-            return None
+            return None, False
         if not isinstance(feats, np.ndarray) or feats.ndim != 2:
             LOG.warning("CLIP(subprocess): bad feature array shape=%s", getattr(feats, "shape", None))
-            return None
-        return feats.astype(np.float32, copy=False)
+            return None, False
+        return feats.astype(np.float32, copy=False), False
     except Exception as e:
         LOG.exception("CLIP(subprocess) failed: %s", e)
-        return None
+        return None, False
     finally:
         try:
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
             pass
 
-def _call_worker_inprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Optional[np.ndarray]:
+def _call_worker_inprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Tuple[Optional[np.ndarray], bool]:
     """
     In-process path (no timeout). Used only if run_mode='inprocess'.
     """
@@ -128,7 +128,7 @@ def _call_worker_inprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Opti
         from aesthetic.features.clip_worker import compute_clip_embeddings
     except Exception as e:
         LOG.warning("CLIP(inprocess): worker API not available: %s", e)
-        return None
+        return None, False
 
     # Try requested device first, then CPU if CUDA fails.
     order = [args["device"]]
@@ -147,11 +147,11 @@ def _call_worker_inprocess(args: dict, frames_bgr: Sequence[np.ndarray]) -> Opti
             if not isinstance(feats, np.ndarray) or feats.ndim != 2:
                 LOG.warning("CLIP(inprocess): bad features on device %s", dev); continue
             LOG.info("CLIP: embeddings shape=%s in %.2fs", feats.shape, time.time()-t0)
-            return feats.astype(np.float32, copy=False)
+            return feats.astype(np.float32, copy=False), False
         except Exception as e:
             LOG.warning("CLIP(inprocess): failed on device %s: %s", dev, e)
             continue
-    return None
+    return None, False
 
 def embed_frames_if_enabled(frames_bgr: Sequence[np.ndarray], global_config: Optional[dict]) -> Optional[Dict[str, Any]]:
     """
@@ -167,12 +167,13 @@ def embed_frames_if_enabled(frames_bgr: Sequence[np.ndarray], global_config: Opt
         return None
 
     # Prefer subprocess mode (timeout-safe)
+    timed_out = False
     if args["run_mode"] == "subprocess":
-        feats = _call_worker_subprocess(args, frames_bgr)
+        feats, timed_out = _call_worker_subprocess(args, frames_bgr)
     else:
-        feats = _call_worker_inprocess(args, frames_bgr)
+        feats, _ = _call_worker_inprocess(args, frames_bgr)
 
     if feats is None:
         LOG.warning("CLIP: proceeding without embeddings.")
-        return None
-    return {"feat_clip": feats}
+        return {"feat_clip": None, "timed_out": timed_out}
+    return {"feat_clip": feats, "timed_out": timed_out}
