@@ -1,7 +1,0 @@
-﻿#torch
-#torchvision
-#torchaudio
-transformers
-sentencepiece
-safetensors
-onnxruntime

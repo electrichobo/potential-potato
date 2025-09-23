@@ -1,9 +1,9 @@
-"""Utility helpers shared across the AESTHETIC pipeline.
+# -*- coding: utf-8 -*-
+"""
+Utility helpers shared across the AESTHETIC pipeline.
 
-This module centralises configuration loading/validation, deterministic seeding,
-path normalisation, lightweight feature caching, and manifest/JSON helpers.  The
-goal is to keep the core pipeline lean while providing clearly documented
-building blocks that are easy to unit test.
+Centralizes configuration loading/validation, deterministic seeding,
+path normalization, lightweight feature caching, and manifest/JSON helpers.
 """
 
 from __future__ import annotations
@@ -15,29 +15,25 @@ import logging
 import os
 from pathlib import Path
 import random
-from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple
+from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple, Union
 
-try:  # NumPy is optional in a few helper paths (e.g. seeding during tests)
+try:
     import numpy as _np  # type: ignore
-except Exception:  # pragma: no cover - NumPy is a runtime dependency in prod
+except Exception:  # pragma: no cover
     _np = None  # type: ignore
-
 
 LOG = logging.getLogger("aesthetic.utils")
 
-
 # ---------------------------------------------------------------------------
-# Project paths
+# Project paths (this module lives at aesthetic/core/utils.py)
+# parents[2] is the repo root (e.g., E:\AestheticApp)
 # ---------------------------------------------------------------------------
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
-
 # ---------------------------------------------------------------------------
-# Config helpers
+# Default config (kept aligned with README/agents)
 # ---------------------------------------------------------------------------
-
 _DEFAULT_CONFIG: Dict[str, Any] = {
     "sampling": {"random_seed": 42, "jitter_frac": 0.12},
     "extract": {
@@ -92,24 +88,25 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Config I/O + merging
+# ---------------------------------------------------------------------------
 
-def load_config_file(path: Optional[Path] = None) -> Dict[str, Any]:
-    """Load a YAML configuration file if it exists, otherwise return defaults."""
-
-    import yaml  # Local import to keep the module importable during tests
+def load_config_file(path: Optional[Path | str] = None) -> Dict[str, Any]:
+    """Load YAML config from *path* or from DEFAULT_CONFIG_PATH if omitted."""
+    import yaml  # local import
 
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
         LOG.warning("config not found at %s; using defaults", cfg_path)
-        return json.loads(json.dumps(_DEFAULT_CONFIG))  # deep copy via JSON
+        return json.loads(json.dumps(_DEFAULT_CONFIG))  # deep copy
     with cfg_path.open("r", encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle) or {}
     return merge_dicts(_DEFAULT_CONFIG, loaded)
 
 
 def merge_dicts(base: Mapping[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
-    """Recursively merge *override* into *base* returning a new dictionary."""
-
+    """Recursively merge override into base, returning a new dict."""
     out: Dict[str, Any] = json.loads(json.dumps(base))  # deep copy
     stack: list[Tuple[MutableMapping[str, Any], Mapping[str, Any]]] = [(out, override)]
     while stack:
@@ -124,7 +121,6 @@ def merge_dicts(base: Mapping[str, Any], override: Mapping[str, Any]) -> Dict[st
 
 def _clamp(value: Any, lo: float, hi: float, default: float, *, key: str) -> float:
     """Clamp numeric config values with logging."""
-
     try:
         v = float(value)
     except Exception:
@@ -140,8 +136,7 @@ def _clamp(value: Any, lo: float, hi: float, default: float, *, key: str) -> flo
 
 
 def apply_cli_overrides(cfg: Dict[str, Any], overrides: Mapping[str, Any]) -> Dict[str, Any]:
-    """Return a new config with dot-notation overrides applied."""
-
+    """Apply dot-notation overrides to a config copy."""
     out = json.loads(json.dumps(cfg))
     for dotted_key, value in overrides.items():
         parts = dotted_key.split(".")
@@ -154,14 +149,11 @@ def apply_cli_overrides(cfg: Dict[str, Any], overrides: Mapping[str, Any]) -> Di
 
 def prepare_config(raw_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Validate and normalise configuration:
-
-    * Merge with defaults.
-    * Clamp numeric ranges.
-    * Normalise relative paths to absolute.
-    * Ensure optional blocks exist (e.g. hero_video dict).
+    Validate and normalize configuration:
+    - merge with defaults
+    - clamp numeric ranges
+    - ensure optional blocks exist
     """
-
     cfg = merge_dicts(_DEFAULT_CONFIG, raw_cfg or {})
 
     # Sampling
@@ -178,245 +170,214 @@ def prepare_config(raw_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         extract.get("per_scene_keep_pct", 0.4), 0.05, 1.0, 0.4, key="extract.per_scene_keep_pct"
     )
     extract["min_scene_len_frames"] = max(1, int(extract.get("min_scene_len_frames", 12)))
-    extract["min_candidate_gap_frames"] = max(
-        1, int(extract.get("min_candidate_gap_frames", 6))
-    )
+    extract["min_candidate_gap_frames"] = max(1, int(extract.get("min_candidate_gap_frames", 6)))
 
     # Selection
     select = cfg.setdefault("select", {})
     select["top_k"] = max(1, int(select.get("top_k", 6)))
-    select["overcluster_factor"] = max(
-        1.0, float(select.get("overcluster_factor", 4.0))
-    )
+    select["overcluster_factor"] = max(1.0, float(select.get("overcluster_factor", 4.0)))
     select["per_cluster_top"] = max(1, int(select.get("per_cluster_top", 2)))
 
     # Dedup
     dedup = cfg.setdefault("dedup", {})
     dedup["enable"] = bool(dedup.get("enable", True))
-    dedup["embed_min_cosine_dist"] = _clamp(
-        dedup.get("embed_min_cosine_dist", 0.02), 0.0, 1.0, 0.02, key="dedup.embed_min_cosine_dist"
-    )
+    dedup["embed_min_cosine_dist"] = float(dedup.get("embed_min_cosine_dist", 0.02))
     dedup["dhash"] = bool(dedup.get("dhash", True))
     dedup["dhash_threshold"] = max(0, int(dedup.get("dhash_threshold", 6)))
 
-    # Output paths
+    # Output
     output = cfg.setdefault("output", {})
-    base_folder = Path(output.get("folder", "aesthetic/outputs"))
-    if not base_folder.is_absolute():
-        base_folder = (PROJECT_ROOT / base_folder).resolve()
-    output["folder"] = str(base_folder)
-    hero = output.setdefault("hero_video", {})
-    hero["enabled"] = bool(hero.get("enabled", True))
-    hero["seconds_before"] = max(0.0, float(hero.get("seconds_before", 0.8)))
-    hero["seconds_after"] = max(0.0, float(hero.get("seconds_after", 1.2)))
-    hero["max_total_duration"] = max(1.0, float(hero.get("max_total_duration", 45.0)))
-    hero["fps"] = max(1, int(hero.get("fps", 30)))
-    hero["contact_sheet"] = bool(hero.get("contact_sheet", True))
+    output["folder"] = str(Path(output.get("folder", "aesthetic/outputs")))
+    hero_video = output.setdefault("hero_video", {})
+    hero_video["enabled"] = bool(hero_video.get("enabled", True))
+    hero_video["seconds_before"] = float(hero_video.get("seconds_before", 0.8))
+    hero_video["seconds_after"] = float(hero_video.get("seconds_after", 1.2))
+    hero_video["max_total_duration"] = float(hero_video.get("max_total_duration", 45.0))
+    hero_video["fps"] = int(hero_video.get("fps", 30))
+    hero_video["contact_sheet"] = bool(hero_video.get("contact_sheet", True))
 
-    # Heavy settings (clip already validated downstream)
+    # GPU/Heavy
     gpu = cfg.setdefault("gpu", {})
     gpu["enabled"] = bool(gpu.get("enabled", True))
-    gpu["device"] = gpu.get("device", "cuda:0")
-    gpu["batch_size"] = max(1, int(gpu.get("batch_size", 8)))
-
+    gpu["device"] = str(gpu.get("device", "cuda:0"))
+    gpu["batch_size"] = int(gpu.get("batch_size", 8))
     heavy = cfg.setdefault("heavy", {})
     clip = heavy.setdefault("clip", {})
-    clip.setdefault("enabled", True)
-    clip.setdefault("model", "ViT-B-32")
-    clip.setdefault("precision", "fp16")
-    clip.setdefault("run_mode", "subprocess")
-    clip.setdefault("timeout_sec", 90)
+    clip["enabled"] = bool(clip.get("enabled", True))
+    clip["model"] = str(clip.get("model", "ViT-B-32"))
+    clip["precision"] = str(clip.get("precision", "fp16"))
+    clip["run_mode"] = str(clip.get("run_mode", "subprocess"))
+    clip["timeout_sec"] = int(clip.get("timeout_sec", 90))
 
-    # Pillar weights must be positive; normalise lazily when used.
+    # Pillars
     pillars = cfg.setdefault("pillars", {})
-    pillars.setdefault("technical_weight", 0.6)
-    pillars.setdefault("creative_weight", 0.25)
-    pillars.setdefault("subjective_weight", 0.15)
-
-    advanced = cfg.setdefault("advanced_metrics", {})
-    advanced.setdefault("enabled", False)
-    advanced.setdefault("exposure", True)
-    advanced.setdefault("lighting", True)
-    advanced.setdefault("composition", True)
-    advanced.setdefault("movement", True)
-    advanced.setdefault("color", True)
+    pillars["technical_weight"] = float(pillars.get("technical_weight", 0.6))
+    pillars["creative_weight"] = float(pillars.get("creative_weight", 0.25))
+    pillars["subjective_weight"] = float(pillars.get("subjective_weight", 0.15))
 
     return cfg
 
+# ---------------------------------------------------------------------------
+# Output tree and logging directories
+# ---------------------------------------------------------------------------
 
 def ensure_output_tree(cfg: Mapping[str, Any]) -> Tuple[Path, Path, Path]:
-    """Ensure output/, output/logs, and output/cache exist."""
-
-    out_dir = Path((cfg.get("output") or {}).get("folder", "aesthetic/outputs"))
-    logs = out_dir / "logs"
-    cache = out_dir / "cache"
-    for path in (out_dir, logs, cache):
-        path.mkdir(parents=True, exist_ok=True)
-    return out_dir, logs, cache
-
-
-def stable_config_signature(cfg: Mapping[str, Any]) -> str:
-    """Return a deterministic hash of the configuration dictionary."""
-
-    payload = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
-
-
-def media_content_hash(source: str) -> str:
-    """Compute a stable content hash for caching.
-
-    * Local files: SHA1 of file bytes (streamed).
-    * URLs / virtual sources: hash of the source string with a prefix.
     """
+    Ensure output, log, and cache directories exist based on config.
+    Returns (out_dir, log_dir, cache_dir).
+    """
+    out_dir = Path(cfg.get("output", {}).get("folder", "aesthetic/outputs")).expanduser().resolve()
+    log_dir = out_dir / "logs"
+    cache_dir = out_dir / "cache"
+    for p in (out_dir, log_dir, cache_dir):
+        p.mkdir(parents=True, exist_ok=True)
+    return out_dir, log_dir, cache_dir
 
-    try:
-        path = Path(source)
-        if path.exists() and path.is_file():
-            sha1 = hashlib.sha1()
-            with path.open("rb") as handle:
-                while True:
-                    chunk = handle.read(1 << 20)
-                    if not chunk:
-                        break
-                    sha1.update(chunk)
-            return sha1.hexdigest()
-    except Exception as exc:  # pragma: no cover - defensive
-        LOG.warning("media_content_hash: fallback hashing for %s (%s)", source, exc)
-    return hashlib.sha1(f"virtual::{source}".encode("utf-8")).hexdigest()
+# ---------------------------------------------------------------------------
+# Reproducibility
+# ---------------------------------------------------------------------------
 
-
-def seed_everything(seed: int) -> None:
-    """Seed Python and NumPy PRNGs for deterministic behaviour."""
-
+def seed_everything(seed: int = 42) -> None:
+    """Seed Python, random, and NumPy for reproducible runs."""
     random.seed(seed)
+    try:
+        os.environ["PYTHONHASHSEED"] = str(int(seed))
+    except Exception:
+        pass
     if _np is not None:
         try:
-            _np.random.seed(seed)
-        except Exception:  # pragma: no cover - guard for alternative numpy impls
+            _np.random.seed(seed)  # type: ignore[attr-defined]
+        except Exception:
             pass
 
-
 # ---------------------------------------------------------------------------
-# Feature cache helpers
+# Hashes, caching, JSON helpers
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class CacheKey:
     media_hash: str
-    feature: str
-    signature: str
+    feature_name: str
+    cfg_signature: str
     frame_index: int
 
-    def path(self, cache_dir: Path, ext: str) -> Path:
-        return cache_dir / self.media_hash / self.feature / f"{self.signature}_f{self.frame_index:08d}{ext}"
+
+def media_content_hash(path: str) -> str:
+    """Return a stable content hash for the input media path."""
+    p = Path(path)
+    s = f"{p.resolve()}::{p.stat().st_size if p.exists() else 0}"
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
 
-def load_cache_json(cache_dir: Path, key: CacheKey) -> Optional[Dict[str, Any]]:
-    path = key.path(cache_dir, ".json")
-    if not path.exists():
-        return None
+def stable_config_signature(cfg: Mapping[str, Any]) -> str:
+    """Return a short signature for config-impacting fields."""
+    s = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
+
+def _to_jsonable(obj: Any) -> Any:
+    """
+    Recursively convert objects to JSON-serialisable forms:
+      * NumPy scalars -> Python scalars
+      * NumPy arrays  -> lists
+      * Path          -> str
+      * sets/tuples   -> lists
+      * mappings/sequences -> converted recursively
+    """
+    # NumPy scalar?
+    if _np is not None and isinstance(obj, _np.generic):  # type: ignore[attr-defined]
+        return obj.item()
+    # NumPy array?
+    if _np is not None and isinstance(obj, _np.ndarray):  # type: ignore[attr-defined]
+        return obj.tolist()
+    # Path
+    if isinstance(obj, Path):
+        return str(obj)
+    # Basic builtins
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    # Mapping
+    if isinstance(obj, Mapping):
+        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+    # Iterable (list/tuple/set)
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_jsonable(v) for v in obj]
+    # Fallback: string repr to avoid crashes in late-stage exports
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except Exception as exc:  # pragma: no cover - corrupted cache should be ignored
-        LOG.warning("cache json read failed for %s: %s", path, exc)
-        return None
+        return str(obj)
+    except Exception:
+        return "<unserializable>"
 
+def save_cache_json(root: Path, key: CacheKey, payload: Mapping[str, Any]) -> None:
+    path = root / f"{key.media_hash}_{key.feature_name}_{key.cfg_signature}_{key.frame_index}.json"
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(_to_jsonable(payload), f, indent=2, sort_keys=True)
 
-def save_cache_json(cache_dir: Path, key: CacheKey, payload: Mapping[str, Any]) -> None:
-    path = key.path(cache_dir, ".json")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
+def load_cache_json(root: Path, key: CacheKey) -> Optional[Dict[str, Any]]:
+    path = root / f"{key.media_hash}_{key.feature_name}_{key.cfg_signature}_{key.frame_index}.json"
+    if path.exists():
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
 
+def save_cache_npz(root: Path, key: CacheKey, array: "Any") -> None:
+    import numpy as np  # local
+    path = root / f"{key.media_hash}_{key.feature_name}_{key.cfg_signature}_{key.frame_index}.npz"
+    np.savez_compressed(str(path), data=array)
 
-def load_cache_npz(cache_dir: Path, key: CacheKey) -> Optional[Any]:
-    path = key.path(cache_dir, ".npz")
-    if not path.exists():
-        return None
-    try:
-        import numpy as np
-
-        data = np.load(path)
-        if "arr_0" in data:
-            return data["arr_0"]
-        return data
-    except Exception as exc:  # pragma: no cover - treat as cache miss
-        LOG.warning("cache npz read failed for %s: %s", path, exc)
-        return None
-
-
-def save_cache_npz(cache_dir: Path, key: CacheKey, array: Any) -> None:
-    path = key.path(cache_dir, ".npz")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        import numpy as np
-
-        np.savez_compressed(path, array)
-    except Exception as exc:  # pragma: no cover - warn but continue
-        LOG.warning("cache npz write failed for %s: %s", path, exc)
-
+def load_cache_npz(root: Path, key: CacheKey) -> Optional["Any"]:
+    import numpy as np  # local
+    path = root / f"{key.media_hash}_{key.feature_name}_{key.cfg_signature}_{key.frame_index}.npz"
+    if path.exists():
+        try:
+            with np.load(str(path)) as data:
+                return data["data"]
+        except Exception:
+            return None
+    return None
 
 def write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    """Write a JSON file with robust coercion for NumPy/Path types."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-    tmp.replace(path)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(_to_jsonable(payload), f, indent=2, sort_keys=True)
 
+# ---------------------------------------------------------------------------
+# Light summaries
+# ---------------------------------------------------------------------------
 
-def as_absolute(path: str | Path, base: Optional[Path] = None) -> Path:
-    p = Path(path)
-    if p.is_absolute():
-        return p
-    base = base or PROJECT_ROOT
-    return (base / p).resolve()
+def summarise_candidates(items: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    total = 0
+    scenes = set()
+    for it in items:
+        total += 1
+        scenes.add(int(it.get("scene_index", 0))) if isinstance(it, Mapping) else None
+    return {"total": total, "unique_scenes": len(scenes)}
 
+# ---------------------------------------------------------------------------
+# Pillar weights — accepts cfg *or* 3 floats
+# ---------------------------------------------------------------------------
 
-def pillar_weight_normaliser(cfg: Mapping[str, Any]) -> Tuple[float, float, float]:
-    pillars = cfg.get("pillars") or {}
-    technical = max(0.0, float(pillars.get("technical_weight", 0.0)))
-    creative = max(0.0, float(pillars.get("creative_weight", 0.0)))
-    subjective = max(0.0, float(pillars.get("subjective_weight", 0.0)))
-    total = technical + creative + subjective
-    if total <= 0.0:
-        return 1.0, 0.0, 0.0
-    return technical / total, creative / total, subjective / total
+def pillar_weight_normaliser(
+    a: Union[Mapping[str, Any], float],
+    b: Optional[float] = None,
+    c: Optional[float] = None,
+) -> Tuple[float, float, float]:
+    """
+    Return normalised (wt, wc, ws) in [0..1] summing to 1.
 
-
-def summarise_candidates(values: Iterable[float]) -> Dict[str, float]:
-    vals = list(float(v) for v in values)
-    if not vals:
-        return {"min": 0.0, "max": 0.0, "mean": 0.0}
-    import statistics
-
-    return {
-        "min": float(min(vals)),
-        "max": float(max(vals)),
-        "mean": float(statistics.fmean(vals)),
-    }
-
-
-__all__ = [
-    "PROJECT_ROOT",
-    "DEFAULT_CONFIG_PATH",
-    "load_config_file",
-    "merge_dicts",
-    "prepare_config",
-    "apply_cli_overrides",
-    "ensure_output_tree",
-    "stable_config_signature",
-    "media_content_hash",
-    "seed_everything",
-    "CacheKey",
-    "load_cache_json",
-    "save_cache_json",
-    "load_cache_npz",
-    "save_cache_npz",
-    "write_json",
-    "as_absolute",
-    "pillar_weight_normaliser",
-    "summarise_candidates",
-]
-
+    Accepts either:
+      - pillar_weight_normaliser(cfg_mapping)
+      - pillar_weight_normaliser(wt, wc, ws)
+    """
+    if isinstance(a, Mapping) and b is None and c is None:
+        pillars = (a.get("pillars") or {})
+        wt = float(pillars.get("technical_weight", 0.6))
+        wc = float(pillars.get("creative_weight", 0.25))
+        ws = float(pillars.get("subjective_weight", 0.15))
+    else:
+        wt = float(a)  # type: ignore[arg-type]
+        wc = float(b if b is not None else 0.0)
+        ws = float(c if c is not None else 0.0)
+    s = max(1e-6, wt + wc + ws)
+    return (wt / s, wc / s, ws / s)

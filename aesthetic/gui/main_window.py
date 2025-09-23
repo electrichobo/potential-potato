@@ -1,265 +1,321 @@
 ﻿# -*- coding: utf-8 -*-
+"""Tkinter GUI with verbose status panel for AESTHETIC.
+
+Enhancements:
+- Source field accepts local file paths OR URLs; "Paste URL" helper.
+- Checkbox to toggle hero video export on/off per run.
+- "Open Logs" opens the logs folder in Explorer/Finder.
+"""
+
 from __future__ import annotations
-# AESTHETIC — modular GUI (kept under aesthetic/gui/)
-# - Loads PROJECT_ROOT/config.yaml (no env var lookups)
-# - Background thread for pipeline
-# - Logs → outputs/logs/run.log
-# - Copy Error, Open Output, post-run summary
 
-import logging, logging.handlers, threading, traceback, datetime, glob, os, sys
+import logging, os, subprocess, sys, threading, tkinter as tk
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import yaml
-
-from aesthetic.core.pipeline import run_pipeline
-
-# ----- paths -----
-GUI_DIR = Path(__file__).resolve().parent           # .../aesthetic/gui
-PKG_DIR = GUI_DIR.parent                             # .../aesthetic
-PROJECT_ROOT = PKG_DIR.parent                        # .../AestheticApp
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"   # ALWAYS this file
+from aesthetic.core import pipeline
+from aesthetic.core.utils import ensure_output_tree, load_config_file, prepare_config
 
 LOG = logging.getLogger("aesthetic.gui")
 
-# ---------- logging ----------
-def _ensure_logging(cfg: Dict[str, Any]) -> None:
-    out_dir = Path(((cfg.get("output") or {}).get("folder")) or "aesthetic/outputs")
-    if not out_dir.is_absolute():
-        out_dir = (PROJECT_ROOT / out_dir).resolve()
-    log_dir = out_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "run.log"
+def _is_url(s: str) -> bool:
+    try:
+        u = urlparse(s.strip())
+        return bool(u.scheme) and u.scheme.lower() in {"http", "https", "file"}
+    except Exception:
+        return False
 
-    root = logging.getLogger()
-    if root.handlers:
-        return
-    root.setLevel(logging.INFO)
-    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+PLACEHOLDER = "File path or YouTube/Vimeo URL"
+PLACEHOLDER_COLOR = "#888"
+ENTRY_COLOR = "#000"
 
-    ch = logging.StreamHandler()
-    ch.setFormatter(fmt)
-    root.addHandler(ch)
+class StagePanel(ttk.Frame):
+    def __init__(self, master: tk.Widget, **kwargs: Any) -> None:
+        super().__init__(master, **kwargs)
+        self.vars: Dict[str, tk.StringVar] = {}
+        stages = [
+            ("ingest", "Ingest"),
+            ("scene_detection", "Scene detection"),
+            ("sampling", "Sampling"),
+            ("features", "Features"),
+            ("selection", "Selection"),
+            ("dedup", "Dedup"),
+            ("export", "Export"),
+        ]
+        for row, (key, label) in enumerate(stages):
+            ttk.Label(self, text=label + ":", font=("Segoe UI", 9, "bold")).grid(row=row, column=0, sticky="nw", padx=(0, 6), pady=2)
+            var = tk.StringVar(value="pending")
+            ttk.Label(self, textvariable=var, wraplength=240, justify="left").grid(row=row, column=1, sticky="w", pady=2)
+            self.vars[key] = var
 
-    fh = logging.handlers.RotatingFileHandler(str(log_path), maxBytes=5_000_000, backupCount=3, encoding="utf-8")
-    fh.setFormatter(fmt)
-    root.addHandler(fh)
+    def update_stage(self, key: str, text: str) -> None:
+        if key in self.vars:
+            self.vars[key].set(text)
 
-# ---------- config ----------
-def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
-    """
-    Always load config from PROJECT_ROOT/config.yaml unless an explicit path is given.
-    Environment variables are intentionally ignored.
-    """
-    p = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
-    if not p.exists():
-        LOG.warning("config: %s not found, using defaults", p)
-        return {}
-    with p.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-
-    # Normalize output folder to absolute path so every module agrees
-    out_rel = ((cfg.get("output") or {}).get("folder")) or "aesthetic/outputs"
-    out_abs = Path(out_rel)
-    if not out_abs.is_absolute():
-        out_abs = (PROJECT_ROOT / out_rel).resolve()
-    cfg.setdefault("output", {})["folder"] = str(out_abs)
-    return cfg
-
-# ---------- GUI ----------
-class App(tk.Tk):
-    """AESTHETIC 2.0 — modular GUI shell."""
-    def __init__(self, cfg: Dict[str, Any] | None = None):
+class MainWindow(tk.Tk):
+    def __init__(self, config_path: Optional[Path] = None) -> None:
         super().__init__()
-        self.title("AESTHETIC 2.0")
-        self.geometry(self._load_geometry())
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.title("AESTHETIC — Hero Frame Selector")
+        self.geometry("1200x720")
+        self.minsize(1000, 600)
 
-        self.cfg: Dict[str, Any] = cfg or load_config()
-        _ensure_logging(self.cfg)
-        logging.getLogger("aesthetic.gui").info("config loaded from %s", DEFAULT_CONFIG_PATH)
+        self.config_path = config_path
+        self.config_dict = prepare_config(load_config_file(config_path))
+        ensure_output_tree(self.config_dict)
 
-        # UI state
-        self.source_var = tk.StringVar(value="")
-        self.status_var = tk.StringVar(value="idle")
         self.progress = tk.DoubleVar(value=0.0)
-        self.last_error_text = ""
+        self.status_var = tk.StringVar(value="idle")
+        self.error_text = ""
+        self.last_manifest: Optional[str] = None
 
-        # Layout
-        root = ttk.Frame(self, padding=10); root.pack(fill="both", expand=True)
-        ttk.Label(root, text="Source (file path or URL):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(root, textvariable=self.source_var, width=72).grid(row=1, column=0, columnspan=3, sticky="ew")
-        ttk.Button(root, text="Browse", command=self._browse).grid(row=1, column=3, sticky="e", padx=(6,0))
+        self._build_ui()
 
-        btns = ttk.Frame(root); btns.grid(row=2, column=0, columnspan=4, sticky="we", pady=(10, 0))
-        ttk.Button(btns, text="Run", command=self._run_async).pack(side="left")
-        ttk.Button(btns, text="Reload config", command=self._reload_config).pack(side="left", padx=(8,0))
-        ttk.Button(btns, text="Open Output", command=self._open_out).pack(side="left", padx=(8,0))
-        self.copy_btn = ttk.Button(btns, text="Copy Error", command=self._copy_error, state="disabled")
-        self.copy_btn.pack(side="left", padx=(8,0))
+    def _build_ui(self) -> None:
+        container = ttk.Frame(self, padding=10)
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=3)
+        container.columnconfigure(1, weight=2)
+        container.rowconfigure(3, weight=1)
 
-        ttk.Label(root, textvariable=self.status_var).grid(row=3, column=0, columnspan=4, sticky="w", pady=(8, 0))
-        ttk.Progressbar(root, variable=self.progress, maximum=1.0).grid(row=4, column=0, columnspan=4, sticky="ew", pady=(4, 8))
+        # Left column ---------------------------------------------------
+        input_frame = ttk.LabelFrame(container, text="Source")
+        input_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        self.source_var = tk.StringVar()
+        self.source_entry = ttk.Entry(input_frame, textvariable=self.source_var, width=64)
+        self.source_entry.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        ttk.Button(input_frame, text="Browse…", command=self._browse).grid(row=0, column=1, padx=6, pady=6)
+        ttk.Button(input_frame, text="Paste URL", command=self._paste_url).grid(row=0, column=2, padx=(0, 6), pady=6)
+        input_frame.columnconfigure(0, weight=1)
 
-        self.log = tk.Text(root, height=18, width=100)
-        self.log.grid(row=5, column=0, columnspan=4, sticky="nsew")
-        root.rowconfigure(5, weight=1)
-        root.columnconfigure(0, weight=1)
+        # Placeholder behavior
+        self._apply_placeholder()
+        self.source_entry.bind("<FocusIn>", self._placeholder_focus_in)
+        self.source_entry.bind("<FocusOut>", self._placeholder_focus_out)
 
-    # ----- UI actions -----
+        # Run options row
+        options = ttk.Frame(container)
+        options.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.export_var = tk.BooleanVar(value=bool(((self.config_dict.get("output") or {}).get("hero_video") or {}).get("enabled", True)))
+        ttk.Checkbutton(options, text="Export hero video", variable=self.export_var).pack(side="left")
+        ttk.Label(options, text=" ").pack(side="left")  # spacer
+
+        # Buttons row
+        buttons = ttk.Frame(container)
+        buttons.grid(row=2, column=0, sticky="w", pady=8)
+        ttk.Button(buttons, text="Run", command=self._run_async).pack(side="left")
+        ttk.Button(buttons, text="Reload config", command=self._reload_config).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Open Output", command=self._open_output).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Open Logs", command=self._open_logs).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Rerun with Seed…", command=self._rerun_with_seed).pack(side="left", padx=6)
+
+        # Extra controls
+        extra_buttons = ttk.Frame(container)
+        extra_buttons.grid(row=2, column=1, sticky="e", pady=8)
+        self.copy_btn = ttk.Button(extra_buttons, text="Copy Error", command=self._copy_error, state="disabled")
+        self.copy_btn.pack(side="left", padx=6)
+
+        # Progress + log
+        ttk.Label(container, textvariable=self.status_var).grid(row=3, column=0, sticky="w")
+        ttk.Progressbar(container, variable=self.progress, maximum=1.0).grid(row=3, column=0, sticky="we", pady=(4, 8))
+        self.log = tk.Text(container, height=16)
+        self.log.grid(row=4, column=0, sticky="nsew")
+
+        # Right column --------------------------------------------------
+        status_frame = ttk.LabelFrame(container, text="Status & Logs")
+        status_frame.grid(row=0, column=1, rowspan=5, sticky="nsew")
+        status_frame.columnconfigure(0, weight=1)
+
+        device_info = ttk.LabelFrame(status_frame, text="Device")
+        device_info.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        gpu_cfg = self.config_dict.get("gpu") or {}
+        heavy_clip = (self.config_dict.get("heavy") or {}).get("clip", {})
+        info_lines = [
+            f"GPU: {'enabled' if gpu_cfg.get('enabled', True) else 'disabled'} ({gpu_cfg.get('device', 'cpu')})",
+            f"CLIP: {'on' if heavy_clip.get('enabled', True) else 'off'} mode={heavy_clip.get('run_mode', 'subprocess')}",
+        ]
+        ttk.Label(device_info, text="\n".join(info_lines), justify="left").grid(row=0, column=0, sticky="w")
+
+        self.stages = StagePanel(status_frame)
+        self.stages.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
+        status_frame.rowconfigure(1, weight=1)
+
+    # Placeholder mechanics
+    def _apply_placeholder(self) -> None:
+        self.source_entry.configure(foreground=PLACEHOLDER_COLOR)
+        self.source_var.set(PLACEHOLDER)
+
+    def _placeholder_focus_in(self, _e=None) -> None:
+        if self.source_var.get() == PLACEHOLDER:
+            self.source_var.set("")
+            self.source_entry.configure(foreground=ENTRY_COLOR)
+
+    def _placeholder_focus_out(self, _e=None) -> None:
+        if not self.source_var.get().strip():
+            self._apply_placeholder()
+
+    # Helpers
     def _browse(self) -> None:
-        path = filedialog.askopenfilename(title="Choose video")
-        if path: self.source_var.set(path)
+        path = filedialog.askopenfilename(
+            title="Select video",
+            filetypes=[("Video files", "*.mp4 *.mov *.mkv *.webm *.avi *.m4v"), ("All files", "*.*")]
+        )
+        if path:
+            self.source_entry.configure(foreground=ENTRY_COLOR)
+            self.source_var.set(path)
+
+    def _paste_url(self) -> None:
+        try:
+            text = self.clipboard_get().strip()
+        except Exception:
+            text = ""
+        if not text:
+            messagebox.showinfo("AESTHETIC", "Clipboard is empty.")
+            return
+        if not _is_url(text):
+            messagebox.showwarning("AESTHETIC", "Clipboard doesn't look like a URL.")
+            return
+        self.source_entry.configure(foreground=ENTRY_COLOR)
+        self.source_var.set(text)
 
     def _reload_config(self) -> None:
-        self.cfg = load_config()
-        _ensure_logging(self.cfg)
-        self._logline("Config reloaded.")
-        self.status_var.set("config reloaded")
+        self.config_dict = prepare_config(load_config_file(self.config_path))
+        ensure_output_tree(self.config_dict)
+        self._log("Config reloaded.")
 
-    def _open_out(self) -> None:
-        out_dir = Path((self.cfg.get("output") or {}).get("folder", "aesthetic/outputs"))
+    def _open_output(self) -> None:
+        out_dir = Path((self.config_dict.get("output") or {}).get("folder", "aesthetic/outputs"))
+        out_dir.mkdir(parents=True, exist_ok=True)
         try:
-            out_dir.mkdir(parents=True, exist_ok=True)
             if sys.platform.startswith("win"):
-                os.startfile(str(out_dir))   # type: ignore[attr-defined]
+                os.startfile(str(out_dir))  # type: ignore[attr-defined]
             elif sys.platform == "darwin":
-                os.system(f'open "{out_dir}"')
+                subprocess.run(["open", str(out_dir)], check=False)
             else:
-                os.system(f'xdg-open "{out_dir}"')
-        except Exception as e:
-            messagebox.showerror("AESTHETIC", f"Could not open folder:\n{out_dir}\n\n{e}")
+                subprocess.run(["xdg-open", str(out_dir)], check=False)
+        except Exception as exc:
+            messagebox.showerror("AESTHETIC", f"Could not open output folder\n{exc}")
+
+    def _open_logs(self) -> None:
+        out_dir = Path((self.config_dict.get("output") or {}).get("folder", "aesthetic/outputs"))
+        log_dir = out_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(log_dir))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.run(["open", str(log_dir)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(log_dir)], check=False)
+        except Exception as exc:
+            messagebox.showerror("AESTHETIC", f"Could not open logs folder\n{exc}")
 
     def _copy_error(self) -> None:
-        if not self.last_error_text:
+        if not self.error_text:
             return
         self.clipboard_clear()
-        self.clipboard_append(self.last_error_text)
+        self.clipboard_append(self.error_text)
         self.update()
-        messagebox.showinfo("Copied", "Error details copied to clipboard.")
+        messagebox.showinfo("Copied", "Error details copied to clipboard")
 
-    # ----- run (background) -----
+    def _log(self, msg: str) -> None:
+        self.log.insert("end", msg + "\n")
+        self.log.see("end")
+
+    # Run orchestration
     def _run_async(self) -> None:
         src = self.source_var.get().strip()
-        if not src:
-            messagebox.showerror("AESTHETIC", "Please provide a file path or URL")
+        if not src or src == PLACEHOLDER:
+            messagebox.showwarning("AESTHETIC", "Please choose a file or paste a URL.")
             return
-        self.status_var.set("running…")
+
+        # Apply the "Export hero video" toggle into the config copy we send to the pipeline
+        cfg = dict(self.config_dict)  # shallow copy ok (pipeline normalizes)
+        cfg.setdefault("output", {}).setdefault("hero_video", {})["enabled"] = bool(self.export_var.get())
+
         self.progress.set(0.0)
-        self.last_error_text = ""
+        self.status_var.set("starting…")
+        self.error_text = ""
         try:
-            self.copy_btn.state(['disabled'])
+            self.copy_btn.state(["disabled"])
         except Exception:
             pass
-        self._logline("Running pipeline…")
 
-        out_dir = Path((self.cfg.get("output") or {}).get("folder", "aesthetic/outputs"))
-        (out_dir / "logs").mkdir(parents=True, exist_ok=True)
-        run_started = datetime.datetime.now()
+        self._log(f"Running pipeline on: {src} | hero_video={'on' if self.export_var.get() else 'off'}")
 
-        def on_progress(frac: float, msg: str) -> None:
-            self.after(0, lambda: self._update_progress(frac, msg))
-
-        def worker():
+        def worker() -> None:
             try:
-                run_pipeline(
-                    source=src,
-                    config=self.cfg,
-                    progress_cb=on_progress,
-                    cancel_fn=lambda: False,
+                result = pipeline.run_pipeline(
+                    src,
+                    config=cfg,
+                    progress_cb=lambda frac, msg: self.after(0, lambda: self._update_progress(frac, msg)),
                 )
-                saved = self._list_new_outputs(out_dir, since=run_started)
-                self.after(0, lambda: self._on_success(saved))
-            except Exception as e:
-                logging.getLogger("aesthetic.gui").exception("pipeline failed: %s", e)
-                tb = "".join(traceback.format_exc())
-                msg = f"Processing failed: {type(e).__name__}: {e}\n\n{tb}"
-                self.after(0, lambda: self._on_error(msg))
+                self.after(0, lambda: self._on_success(result))
+            except Exception as exc:
+                LOG.exception("pipeline failed: %s", exc)
+                self.after(0, lambda e=exc: self._on_error(e))
 
-        threading.Thread(target=worker, daemon=True, name="pipeline").start()
+        threading.Thread(target=worker, daemon=True).start()
 
-    # ----- helpers -----
-    def _update_progress(self, frac: float, msg: str) -> None:
-        try:
-            self.progress.set(max(0.0, min(1.0, float(frac))))
-        except Exception:
-            self.progress.set(0.0)
-        self.status_var.set(str(msg))
-        self._logline(str(msg))
-        self.update_idletasks()
+    def _update_progress(self, frac: float, message: str) -> None:
+        self.progress.set(max(0.0, min(1.0, float(frac))))
+        self.status_var.set(message)
+        self._log(message)
 
-    def _on_success(self, saved: List[Dict[str, Any]]) -> None:
+    def _on_success(self, result: Dict[str, Any]) -> None:
         self.progress.set(1.0)
         self.status_var.set("done")
-        lines = [f"Saved {len(saved)} frames:"]
-        for w in saved:
-            name = os.path.basename(w.get("path", ""))
-            score = float(w.get("score", 0.0))
-            lines.append(f" - {name:<26}  score={score:.3f}")
-        self._logblock("\n".join(lines))
+        self.last_manifest = result.get("manifest")
+        stage_log = result.get("stage_log", {})
+        for key, data in stage_log.items():
+            if key == "ingest":
+                summary = f"fps={data.get('fps', 0):.2f} frames={data.get('frame_count')}"
+            elif key == "scene_detection":
+                summary = f"{data.get('count', 0)} scenes (method={data.get('method')})"
+            elif key == "sampling":
+                summary = f"candidates={data.get('total_candidates', 0)}"
+            elif key == "features":
+                summary = f"clip={data.get('clip_status', {}).get('computed', 0)}"
+            elif key == "selection":
+                summary = f"selected={data.get('selected', 0)}"
+            elif key == "dedup":
+                summary = f"{data.get('before', 0)}→{data.get('after', 0)}"
+            else:
+                summary = str(data)
+            self.stages.update_stage(key, summary)
+        hero = result.get("hero_video", {})
+        if hero.get("enabled", False):
+            status = "ok" if hero.get("ffmpeg_ok", False) else hero.get("error", "failed")
+            self.stages.update_stage("export", f"hero={status}")
+        else:
+            self.stages.update_stage("export", "disabled")
         try:
-            self.copy_btn.state(['!disabled'])
+            self.copy_btn.state(["!disabled"])
         except Exception:
             pass
 
-    def _on_error(self, full_msg: str) -> None:
+    def _on_error(self, exc: Exception) -> None:
         self.status_var.set("error")
-        self._logblock(full_msg)
-        self.last_error_text = full_msg
+        self.error_text = f"{type(exc).__name__}: {exc}"
+        self._log(self.error_text)
         try:
-            self.copy_btn.state(['!disabled'])
+            self.copy_btn.state(["!disabled"])
         except Exception:
             pass
-        messagebox.showerror("AESTHETIC", full_msg.splitlines()[0])
+        messagebox.showerror("AESTHETIC", self.error_text)
 
-    def _list_new_outputs(self, out_dir: Path, since: datetime.datetime) -> List[Dict[str, Any]]:
-        jpgs = sorted(glob.glob(str(out_dir / "*.jpg")))
-        out: List[Dict[str, Any]] = []
-        for p in jpgs:
-            try:
-                mtime = datetime.datetime.fromtimestamp(os.path.getmtime(p))
-                if mtime < since:
-                    continue
-                side = os.path.splitext(p)[0] + ".txt"
-                score = 0.0
-                if os.path.exists(side):
-                    try:
-                        import json as _json
-                        with open(side, "r", encoding="utf-8") as f:
-                            meta = _json.load(f)
-                        score = float(meta.get("score_blend", meta.get("tech", {}).get("score", 0.0)))
-                    except Exception:
-                        pass
-                out.append({"path": p, "score": score})
-            except Exception:
-                continue
-        out.sort(key=lambda d: (os.path.getmtime(d["path"]), d["score"]), reverse=True)
-        return out
+    def _rerun_with_seed(self) -> None:
+        seed = simpledialog.askinteger("Rerun", "Seed:", minvalue=0, maxvalue=1_000_000)
+        if seed is None:
+            return
+        self.config_dict.setdefault("sampling", {})["random_seed"] = int(seed)
+        self._log(f"Seed set to {seed}")
+        self._run_async()
 
-    # ----- window state -----
-    def _load_geometry(self) -> str:
-        gfile = PROJECT_ROOT / ".aesthetic_ui_geom.txt"
-        try:
-            if gfile.exists():
-                return gfile.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
-        return "1000x640"
+def run_app(config_path: Optional[Path] = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    app = MainWindow(config_path=config_path)
+    app.mainloop()
 
-    def _on_close(self) -> None:
-        gfile = PROJECT_ROOT / ".aesthetic_ui_geom.txt"
-        try:
-            gfile.write_text(self.geometry(), encoding="utf-8")
-        except Exception:
-            pass
-        self.destroy()
-
-def main() -> None:
-    cfg = load_config(DEFAULT_CONFIG_PATH)
-    _ensure_logging(cfg)
-    App(cfg).mainloop()
-
-if __name__ == "__main__":
-    main()
+__all__ = ["run_app", "MainWindow"]

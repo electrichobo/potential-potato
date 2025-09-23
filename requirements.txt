@@ -1,4 +1,5 @@
-﻿numpy
+﻿# Core
+numpy
 pandas
 opencv-python
 pillow
@@ -10,3 +11,19 @@ tqdm
 pyyaml
 requests
 yt-dlp
+
+# CLIP / transformers runtime
+transformers
+sentencepiece
+safetensors
+onnxruntime
+
+# Optional emotion/face extras (disabled by default in code)
+deepface
+mediapipe
+
+# CUDA 12.1 Torch stack
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torchaudio==2.5.1+cu121
+
