@@ -1,0 +1,15 @@
+# ============================================================================
+# Stream Deck Profile Generator Dependencies
+# ----------------------------------------------------------------------------
+# This list only covers the packages required to run the Stream Deck generator
+# CLI.  Project-wide dependencies live in the root-level requirements.txt that
+# supports the broader AESTHETIC application.
+# ============================================================================
+
+# --- API + layout generation -------------------------------------------------
+# The OpenAI SDK supplies the "OpenAI" client used during layout planning.
+openai>=1.0.0
+
+# --- Icon rendering ----------------------------------------------------------
+# Pillow renders the 72x72 PNG button icons written into each profile archive.
+pillow>=10.0.0
